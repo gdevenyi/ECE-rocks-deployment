@@ -1,0 +1,7 @@
+#!/bin/bash
+
+	if [ $(uname -i) == "x86_64" ]; then
+		/share/apps/bin/64/mex
+	else
+		/share/apps/bin/32/mex
+	fi

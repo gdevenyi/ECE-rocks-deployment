@@ -1,0 +1,7 @@
+#!/bin/bash
+
+	if [ $(uname -i) == "x86_64" ]; then
+		/share/apps/bin/64/mbuild
+	else
+		/share/apps/bin/32/mbuild
+	fi

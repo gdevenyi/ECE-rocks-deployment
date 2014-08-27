@@ -1,0 +1,2495 @@
+#!/bin/sh
+#
+#  Name:
+#     mbuild    compilation program for executable programs
+#
+# Copyright 1984-2011 The MathWorks, Inc.
+#____________________________________________________________________________
+#
+    arg0_=$0
+    tmpbase=/tmp/mbuild.$LOGNAME.$$
+
+    abort='rm -f $INTERMEDIATE $basename.o > /dev/null 2>&1; \
+          echo ""; \
+          echo "    mbuild:  interrupted."; \
+          echo ""'
+#
+    trap "eval $abort; exit 1" 1 2 3 15
+#
+#========================= archlist.sh (start) ============================
+#
+# usage:        archlist.sh
+#
+# abstract:     This Bourne Shell script creates the variable ARCH_LIST.
+#
+# note(s):      1. This file is always imbedded in another script
+#
+# Copyright 1997-2007 The MathWorks, Inc.
+# $Revision: 1.1.6.3 $  $Date: 2007/11/12 22:52:47 $
+#----------------------------------------------------------------------------
+#
+    ARCH_LIST='glnx86 glnxa64 mac maci maci64 sol2 sol64'
+#=======================================================================
+# Functions:
+#   check_archlist ()
+#=======================================================================
+    check_archlist () { # Sets ARCH. If first argument contains a valid
+			# arch then ARCH is set to that value else
+		        # an empty string. If there is a second argument
+			# do not output any warning message. The most
+			# common forms of the first argument are:
+			#
+			#     ARCH=arch
+			#     MATLAB_ARCH=arch
+			#     argument=-arch
+			#
+                        # Always returns a 0 status.
+                        #
+                        # usage: check_archlist arch=[-]value [noprint]
+                        #
+	if [ $# -gt 0 ]; then
+	    arch_in=`expr "$1" : '.*=\(.*\)'`
+	    if [ "$arch_in" != "" ]; then
+	        ARCH=`echo "$ARCH_LIST EOF $arch_in" | awk '
+#-----------------------------------------------------------------------
+	{ for (i = 1; i <= NF; i = i + 1)
+	      if ($i == "EOF")
+		  narch = i - 1
+	  for (i = 1; i <= narch; i = i + 1)
+		if ($i == $NF || "-" $i == $NF) {
+		    print $i
+		    exit
+		}
+	}'`
+#-----------------------------------------------------------------------
+	       if [ "$ARCH" = "" -a $# -eq 1 ]; then
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+echo ' '
+echo "    Warning: $1 does not specify a valid architecture - ignored . . ."
+echo ' '
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	       fi
+	    else
+		ARCH=""
+	    fi
+	else
+	    ARCH=""
+	fi
+#
+	return 0
+    }
+#=======================================================================
+#========================= archlist.sh (end) ==============================
+#
+#========================== version.sh (start) ============================
+#
+# usage:        version [-b | -f | -p]
+#
+# abstract:     This POSIX Shell script function returns the MATLAB
+#               release version. Any bad options are ignored without
+#		warning.
+#
+#		The version is assumed to be of the form:
+#
+#		    R<integer>[<noninteger>]
+#
+#               options:
+#
+#		b       - return just R<integer> or the base version.
+#               f       - return full version, e.g. R14SP5
+#               p       - return previous full version, e.g. R14SP4
+#
+# note(s):      1. This file is always imbedded in another script
+#
+# Copyright 1992-2006 The MathWorks, Inc.
+# $Revision: 1.1.6.2 $  $Date: 2007/11/12 22:52:50 $
+#----------------------------------------------------------------------------
+#
+version () {
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    ver='R2012a'
+    full_ver='R2012a'
+    prev_ver='R2011b'
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    if [ $# -eq 1 ]; then
+        if [ "$1" = '-b' ]; then
+            expr "$ver" : '\(R[0-9]*\).*$'
+	    return $?
+        fi
+        if [ "$1" = '-f' ]; then
+            echo "$full_ver"
+	    return 0
+        fi
+        if [ "$1" = '-p' ]; then
+            echo "$prev_ver"
+	    return 0
+        fi
+    fi
+    echo "$ver"
+    return 0
+}
+#========================== version.sh (end) ==============================
+#========================== quotearg.sh (start) ============================
+# Copyright 2008 The MathWorks, Inc.
+    quote_arg () { # Assumes a single argument and outputs the argument
+                   # correctly quoted to be evaluated again. <arg1> on
+                   # input must be properly quoted so that it appears
+                   # to this function as a single argument.
+                   # The algorithm is to start out with a double quote
+                   # and switch to single quote at the next double quote.
+                   # Switch to a double quote at the next single quote and
+                   # and so forth. While in a substring between double
+                   # quotes be sure to escape '\' , '$', and '`'. While
+                   # in a substring between single quotes no characters
+                   # need to be escaped.
+                   #
+                   # IMPORTANT: 1. printf is portable. echo is not.
+                   #               Solaris does not handle backslash
+                   #               properly inside of single quotes.
+                   #            2. Old awk coding used to make it work
+                   #               on Solaris.
+                   #
+                   # Always returns a 0
+                   #
+                   # usage: quote_arg  <arg1>
+                   #
+        printf '%s' "$1" | awk '
+#----------------------------------------------------------------------------
+        BEGIN { squote = sprintf ("%c", 39)   # set single quote
+                dquote = sprintf ("%c", 34)   # set double quote
+              }
+NF != 0 { newarg=dquote                 # initialize output string to
+                                        # double quote
+          lookquote=dquote              # look for double quote
+          oldarg = $0
+          for (i = 1; i <= length(oldarg); i++) {
+              c = substr(oldarg,i,1);
+              if (c == lookquote) {
+                  newarg = newarg c
+                  if (lookquote == dquote)
+                      lookquote = squote
+                  else
+                      lookquote = dquote
+                  newarg = newarg lookquote
+              }
+              else if (lookquote == dquote) {
+                  if (c == "\\")
+                      newarg = newarg "\\\\"
+                  else if (c == "$")
+                      newarg = newarg "\\$"
+                  else if (c == "`")
+                      newarg = newarg "\\`"
+                  else
+                      newarg = newarg c
+              }
+              else
+                  newarg = newarg c
+          }
+          printf " %s", newarg lookquote }'
+#----------------------------------------------------------------------------
+        return 0
+    }
+
+#========================== quotearg.sh (end) ==============================
+#========================== getrootdir.sh (start) ============================
+# Copyright 2008 The MathWorks, Inc.
+  get_root_dir () {
+#
+#   Determine the path of the MATLAB root directory - always one directory
+#   up from the path to this command.
+#
+    filename=$1
+#
+# Now it is either a file or a link to a file.
+#
+    cpath=`pwd`
+#
+# Follow up to 8 links before giving up. Same as BSD 4.3
+#
+    n=1
+    maxlinks=8
+    while [ $n -le $maxlinks ]
+    do
+#
+# Get directory correctly!
+#
+        newdir=`echo "$filename" | awk '
+                        { tail = $0
+                          np = index (tail, "/")
+                          while ( np != 0 ) {
+                             tail = substr (tail, np + 1, length (tail) - np)
+                             if (tail == "" ) break
+                             np = index (tail, "/")
+                          }
+                          head = substr ($0, 1, length ($0) - length (tail))
+                          if ( tail == "." || tail == "..")
+                             print $0
+                          else
+                             print head
+                        }'`
+        if [ ! "$newdir" ]; then
+            newdir="."
+        fi
+        (cd "$newdir") > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            describe internal_error_1 >&2
+            cleanup
+            exit 1
+        fi
+        cd "$newdir"
+#
+# Need the function pwd - not the built in one
+#
+        newdir=`/bin/pwd`
+#
+        newbase=`expr //"$filename" : '.*/\(.*\)' \| "$filename"`
+        lscmd=`ls -l "$newbase" 2>/dev/null`
+        if [ ! "$lscmd" ]; then
+            describe internal_error_2 >&2
+            cleanup
+            exit 1
+        fi
+#
+# Check for link portably
+#
+        if [ `expr "$lscmd" : '.*->.*'` -ne 0 ]; then
+            filename=`echo "$lscmd" | awk '{ print $NF }'`
+        else
+#
+# It's a file
+#
+            dir="$newdir"
+            command="$newbase"
+#
+            cd "$dir"/..
+            MATLAB=`/bin/pwd`; export MATLAB
+            break
+        fi
+        n=`expr $n + 1`
+    done
+    if [ $n -gt $maxlinks ]; then
+        describe internal_error_3 >&2
+        cleanup
+        exit 1
+    fi
+#       
+    cd "$cpath"
+  }
+#   end get_root_dir ()
+#========================== getrootdir.sh (end) ==============================
+#========================== validatecompiler.sh (start) ============================
+# Copyright 2008-2011 The MathWorks, Inc.
+# Routines to validate compilers.
+
+
+# Validate if $CC contains a gcc-based compiler
+  check_for_gcc()
+  {
+    echo $CC | awk '
+    BEGIN {
+        isGcc = "no"
+    }
+    /gcc/ {isGcc = "yes";exit 0 }
+    /g\+\+/ {isGcc = "yes";exit 0 }
+    END {
+         print isGcc
+      }
+    '
+  }
+
+  validate_gcc()
+  {
+      if [ `check_for_gcc` "=" "yes" ];then
+# We have a gcc compiler, so we need to check the version.
+# The warning data table format is:
+# allowable_versions[i]="ARCH,supported,acceptable_lower_bound,acceptable_upper_bound"
+# Bounds are inclusive, and missing points are wildcards: "4.2" will allow 4.2.x
+
+          $CC --version | head -n 1  | awk '
+      BEGIN{
+         allowable_versions[1]="glnx86,4.4.6,4.3,4.5"
+         allowable_versions[2]="glnxa64,4.4.6,4.3,4.5"
+         toolName = "'"$TOOL_DISPLAY_NAME"'"
+      }
+      {
+         # Figure out what version of gcc we are dealing with. 
+         # Set version_number to the version of gcc.
+   
+         for (i = 1; i <= NF; i++)
+         {
+            if ($i ~ /^[0-9]+\./)
+            {
+               version_number=$i
+               exit 0 # This sends you to the end block 
+            }
+         }
+      }
+      END{
+   
+         # Find the array member of allowable_versions that corresponds to the
+         # architecture of the local machine.
+
+         for(i in allowable_versions)
+         {
+            # This uses the shell interpreter to substitute for arch.
+
+            if (allowable_versions[i] ~ /^'"$Arch"'/)
+            {
+               string_of_test_versions = allowable_versions[i]
+               break
+            }
+         }
+   
+         # If there is no match, we are dealing with gcc on 
+         # an architecture not in the table.  Assume it is ok and 
+         # quit checking the version.
+
+         if (string_of_test_versions == "")
+         {
+            exit 0;
+         }
+         split(string_of_test_versions, versions, ",")
+         size_of_min_version = split(versions[3], min_version_array,  ".")
+         number_of_digits = split(version_number, gcc_version_array, ".")
+   
+         # Check if the version is smaller than the minimum version.  If it is,
+         # print a warning message and exit.
+
+         need_to_warn = 0
+         for (i = 1; i <= size_of_min_version; i++)
+         {
+            if ( i > number_of_digits)
+            {
+               curr_num = 0
+            }
+            else
+            {
+               curr_num = gcc_version_array[i]
+            }
+            if (curr_num < min_version_array[i])
+            {
+               need_to_warn = 1
+               break
+            }
+            if (curr_num > min_version_array[i])
+            {
+               break
+            }
+         }
+   
+         # If the version is not smaller than the minimum version, check if
+         # it is larger than the maximum version.
+
+         size_of_max_version = split(versions[4], max_version_array, ".")
+         for (i = 1; i <= size_of_max_version; i++)
+         {
+            if (i > number_of_digits)
+            {
+               curr_num = 0
+            }
+            else
+            {
+               curr_num = gcc_version_array[i]
+            }
+            if (curr_num > max_version_array[i])
+            {
+               need_to_warn = 1
+               break
+            }
+            if (curr_num < max_version_array[i])
+            {
+               break
+            }
+         }
+
+         if (need_to_warn == 1)
+         {
+               printf("\n");
+               printf("Warning: You are using gcc version \"%s\".  The version\n", version_number);
+               printf("         currently supported with %s is \"%s\".\n", toolName, versions[2]);
+               printf("         For a list of currently supported compilers see: \n");
+               printf("         http://www.mathworks.com/support/compilers/current_release/\n\n");
+         }
+         exit 0
+
+      }'
+      fi
+}
+
+#========================== validatecompiler.sh (end) ==============================
+    REL_VERSION=`version -f`
+#
+#============================================================================
+#  FUNCTION DEFINITIONS
+#============================================================================
+#
+#****************************************************************************
+#
+# NOTE: A call to cleanup MUST precede any call to exit within this script,
+#       except for within trap calls.
+  cleanup () {
+#
+# Clean up temporary and intermediate files (usually in preparation
+# for exiting)
+#
+    trap "eval $abort; exit 1" 1 2 3 15
+    rm -f $INTERMEDIATE > /dev/null 2>&1
+    }
+#   end cleanup ()
+#
+#****************************************************************************
+#
+  printHelp () {
+      helpTextFileName="$TMW_ROOT/bin/util/mex/mbuildHelp.txt"
+      cat $helpTextFileName
+      echo ''
+  }
+
+#****************************************************************************
+#
+#****************************************************************************
+#
+  describe () {
+#
+    case "$1" in
+        unknown_architecture)
+    echo ''
+    echo '    Sorry! We could not determine the machine architecture'
+    echo '           for your host. Please contact:'
+    echo ''
+    echo '               MathWorks Technical Support'
+    echo ''
+    echo '           for further assistance.'
+    echo ''
+            ;;
+        lang)
+    echo ''
+    echo '   The argument to -lang must be either c or cpp.'
+    echo "   You specified: $lang"
+    echo ''
+            ;; 
+        link)
+    echo ''
+    echo '   The argument to -link must be either exe or shared.' 
+    echo "   You specified: $linkarg"
+    echo ''
+            ;; 
+        no_options_file)
+    echo ''
+    echo '    You need to specify an options file for mbuild'
+    echo '           to use.  This defines all compiler flags'
+    echo '           necessary to compile a given type of executable.'
+    echo '           See TMW_ROOT/bin/engopts.sh for an example.'
+    echo ''
+    echo '           Here'
+    echo ''
+    echo "               TMW_ROOT = $TMW_ROOT"
+    echo ''
+            ;;
+        final_options)
+    echo '----------------------------------------------------------------'
+            if [ "$SOURCE_DIR" = "none" ]; then
+    echo "-> options file specified on command line:"
+    echo "   FILE = $OPTIONS_FILE"
+            elif [ "$SOURCE_DIR" != "" ]; then
+    echo "-> `basename $OPTIONS_FILE` sourced from directory (DIR = $SOURCE_DIR)"
+    echo "   FILE = $OPTIONS_FILE"
+            fi
+    echo '----------------------------------------------------------------'
+    echo "->    TMW_ROOT              = $TMW_ROOT"
+    echo "->    CC                    = $CC"
+    echo "->    CC flags:"
+    echo "         CFLAGS             = $CFLAGS"
+    echo "         CDEBUGFLAGS        = $CDEBUGFLAGS"
+    echo "         COPTIMFLAGS        = $COPTIMFLAGS"
+    echo "         CLIBS              = $CLIBS"
+    echo "         arguments          = $cc_flags"
+    echo "->    LD                    = $LD"
+    echo "->    Link flags:"
+    echo "         LDFLAGS            = $LDFLAGS"
+    echo "         LDDEBUGFLAGS       = $LDDEBUGFLAGS"
+    echo "         LDOPTIMFLAGS       = $LDOPTIMFLAGS"
+    echo "         arguments          = $ld_flags"
+    echo '----------------------------------------------------------------'
+    echo ''
+            ;;
+        status)
+    echo ""
+    echo "    mbuild:  $stat"
+            ;;
+        usage)
+    cat<<'EOF'
+
+    Usage:
+      MBUILD [option1 ... optionN] sourcefile1 [... sourcefileN]
+             [objectfile1 ... objectfileN] [libraryfile1 ... libraryfileN]
+             [exportfile1 ... exportfileN]
+
+    Use the -help option for more information, or consult the MATLAB Compiler 
+    User's Guide.
+
+EOF
+            ;;
+        file_not_found)
+    echo ''
+    echo "    mbuild:  $file not a normal file or does not exist."
+    echo ''
+            ;;
+        compile_stage)
+    echo "-> $compile_command"
+    echo ''
+            ;;
+        failed_compile)
+    echo ''
+    echo "    mbuild: compile of '$file' failed."
+    echo ''
+            ;;
+        makedef_stage)
+    echo ''
+    echo "-> $SHLMAKEDEF $LI_EXPFILE > $EXPFILE"
+    echo ''
+            ;;
+        link_stage)
+    echo "-> $LD $LDFLAGS $ld_flags -o $outname $libetc"
+    echo ''
+    if [ "$ARCH" = "maci64" -a "$debug" = "1" ]; then
+        echo "-> dsymutil $outname"
+    fi
+    echo ''
+            ;;
+        solaris_linker_patch)
+    echo ''
+    echo '    The Solaris linker requires patch #102303-05.'
+    echo '    This script has determined that your linker does'
+    echo '    not have this patch; please install it.  For more'
+    echo "    information run the 'matlabdoc' command at the UNIX"
+    echo '    prompt and read Section 8.2 of the Appendix in'
+    echo '    UNIX News for MATLAB 5.0. If these documents are'
+    echo '    unavailable, contact The MathWorks technical support.'
+    echo ''
+    echo 'Link stage not attempted.'
+    echo ''
+            ;;
+        failed_link)
+    echo ''
+    echo "    mbuild: link of '$outname' failed."
+    echo ''
+            ;;
+        postlink_stage)
+    echo "-> $POSTLINK_CMDS"
+    echo ''
+            ;;
+        cant_make_shl)
+    echo ''
+    echo "    mbuild: The current options file is not configured to create shared"
+    echo "            libraries. You can use mbuild -setup to set up an options"
+    echo "            file which is configured to create shared libraries."
+    echo ''
+            ;;
+        *)
+    echo ''
+    echo " Internal error 4: unimplemented message $1"
+    echo ''
+            ;;
+    esac
+  }
+# end describe ()
+#
+#****************************************************************************
+#
+  smart_quote () {
+#
+# Return a quoted version of the input string if it has spaces in it.
+#
+    if [ $# -gt 1 ]; then
+        echo \"$*\"
+    else
+        echo $1
+    fi   
+  }
+# end smart_quote ()
+#
+#****************************************************************************
+  find_options_file () {
+#
+# Find a file in the list of search directories
+#
+#  ./<filename>                  (<filename> in current directory)
+#  $HOME/.matlab/<rel_version>/<filename>  (<filename> in user's matlab directory)
+#  $TMW_ROOT/bin/<filename>      (<filename> in TMW_ROOT/bin directory)
+#
+#
+    determine_preference_dir
+      
+    if [ -f ./$1 ]; then
+        SOURCE_DIR='.'
+        SOURCE_DIReval=`pwd`
+        OPTIONS_FILE="./$1"
+    elif [ -f $PREF_DIR/$1 ]; then
+        SOURCE_DIR='$PREF_DIR'
+        SOURCE_DIReval=$PREF_DIR
+        OPTIONS_FILE="$PREF_DIR/$1"
+    elif [ -f $TMW_ROOT/bin/$1 ]; then
+#
+# NOTE: At this point we will use the TMW_ROOT determined earlier to
+#       source the file.
+#
+        SOURCE_DIR='$TMW_ROOT/bin'
+        SOURCE_DIReval=$TMW_ROOT/bin
+        OPTIONS_FILE="$TMW_ROOT/bin/$1"
+    else
+        describe no_options_file >&2
+        cleanup
+        exit 1
+    fi
+}
+# end find_options_file ()
+#
+#****************************************************************************
+#
+  get_sl_ext () {
+#
+#   Determine extension for shared library file
+#
+    case "$Arch" in
+        mac|maci|maci64)
+            sl_ext='.dylib'
+            ;;
+	*)
+	    sl_ext='.so'
+	    ;;
+    esac
+  }
+# end get_sl_ext ()
+#****************************************************************************
+#
+  get_ext () {
+#
+#   Determine extension for shared library file
+#
+    if [ "$linkarg" = "shared" ]; then
+        mbuild_ext=$sl_ext
+    else
+        mbuild_ext=''
+    fi
+  }
+# end get_ext ()
+#
+#****************************************************************************
+#
+# embed the setup_options_file function declaration. The #imbed statement
+# causes the imbed program to replace this line with the contents of the
+# indicated file.
+#
+#========================= optsetup.sh (start) ============================
+#!/bin/sh
+#
+#  Name:
+#     optsetup    sh function declaration of setup_options_file
+#     
+#  Usage: (not for interactive use. To be sourced and called as a function)
+#
+#     . optsetup
+#     setup_options_file [<filename>]
+#
+#   Description:
+#     When invoked without a parameter, setup_options_file generates a list
+#     of options files from which to select one to be copied to the default
+#     options file location and name.
+#
+#     When invoked with a parameter, setup_options_file copies the
+#     specified file to the default options file location and name.
+#
+#     setup_options_file is context sensitive. When invoked from mex, it
+#     uses 'mexopts.sh' as the default options file target. When invoked
+#     from mbuild, it uses 'mbuildopts.sh' as the default options file
+#     target. 
+#
+#  See Also:
+#     MATLAB API Guide
+#
+# Copyright 1984-2011 The MathWorks, Inc.
+#  $Revision: 1.16.4.13 $  $Date: 2011/07/05 16:28:56 $
+#____________________________________________________________________________
+#
+#****************************************************************************
+#
+
+determine_preference_dir () { 
+    REL_VERSION=`version -f`
+    # set PREF_DIR to environment variable if it is set
+    # <rel_version> is the base release version like R14.
+
+    # if set but empty, use default
+    PREF_DIR=${MATLAB_PREFDIR:-$HOME/.matlab/$REL_VERSION}
+}
+
+setup_describe () {
+
+SCRIPT_NAME=`basename $arg0_`;
+
+determine_preference_dir
+
+cat << EOF
+
+    Options files control which compiler to use, the compiler and link command
+    options, and the runtime libraries to link against.
+
+    Using the '$SCRIPT_NAME -setup' command selects an options file that is
+    placed in $PREF_DIR and used by default for '$SCRIPT_NAME'. An options 
+    file in the current working directory or specified on the command line 
+    overrides the default options file in $PREF_DIR.
+ 
+    To override the default options file, use the '$SCRIPT_NAME -f' command
+    (see '$SCRIPT_NAME -help' for more information).
+EOF
+ 
+}
+
+setup_options_file () {
+
+
+    TAG="#SELECTION_TAG"
+    DEFAULT_OPTIONS_FILE="mbuildopts.sh"
+
+    #
+    # Determine what script invoked this routine
+    #
+    SOURCE_SCRIPT=`basename $arg0_`
+
+    #
+    # if source script is MEX set the selection tag for MEX
+    #
+    if [ "$SOURCE_SCRIPT" = "mex" ]; then 
+      TAG="#SELECTION_TAG_MEX_OPT:"
+      DEFAULT_OPTIONS_FILE="mexopts.sh"
+    fi
+
+    #
+    # if source script is MBUILD set the selection tag for all non generic...
+    #
+    if [ "$SOURCE_SCRIPT" = "mbuild" ]; then 
+      TAG="#SELECTION_TAG_ML_OPT:"
+      DEFAULT_OPTIONS_FILE="mbuildopts.sh"
+    fi
+
+    #
+    # This function is normally called by MEX/MBUILD with 0 arguments.
+    # When given an input file that exists as first argument, process it
+    # Second argument overrides destination
+    #
+
+    if [ "X$1" != "X" -a -f "$1" ]; then
+        FOUND_FILE=$1
+        OPTIONS_DEST_OVERRIDE=$2
+    else
+
+	setup_describe
+
+	#
+	# Inform the user of the available options files
+	#
+        echo
+        echo The options files available for $SOURCE_SCRIPT are:
+        echo
+
+	#
+	# For each *opt*.sh file in the options file path generate a prompt and
+	# identifier for that file to be selected to copy to the default options
+	# file. 
+	#
+	# Find *opts.sh files in the list of search directories
+	#
+	#  $TMW_ROOT/bin/<filename> 
+	#
+        file_list="`ls $TMW_ROOT/bin/*opts.sh 2> /dev/null`"
+
+        opt_count=0
+        file_array=""
+        for file in $file_list ; do 
+            file_comment=`egrep "^$TAG" $file | cut -f 2,3,4,5,6,7,8 -d:`
+            if [ "$file_comment" != "" ]; then 
+	        opt_count=`expr $opt_count + 1` ;
+	        file_array="$file_array$file:"
+	        echo "  $opt_count: $file : "
+		echo "     $file_comment"
+		echo ' '
+            fi
+        done
+        echo
+        echo "  0: Exit with no changes"
+ 
+	#
+	# Prompt user for a file selection.
+	#
+
+	if [ "$opt_count" = "0" ]; then
+	    fname_number=0
+        else
+            temp=1
+            echo
+            while [ $temp -ne 0 ];
+            do
+              echo "Enter the number of the compiler (0-$opt_count):"
+              read fname_number
+              with_letters_removed=`echo $fname_number | sed -e "s/[^[:digit:]]//g"`
+              if [ "$with_letters_removed" = "$fname_number" -a "$with_letters_removed" != "" ]; then
+
+              #Using test instead of [ ] so we can discard output to stderr
+                  test "$fname_number" -ge "0" -a "$fname_number" -le "$opt_count"
+                  temp=$?
+              fi
+              if [ $temp -ne 0 ]; then
+                  echo
+                  echo "Please enter from 0-$opt_count"
+              fi
+            done
+            echo
+	fi
+        if [ $fname_number -eq 0 ]; then
+            echo "No compiler selected, no action taken."
+            exit 0
+        fi
+	FOUND_FILE="`echo $file_array | cut -f $fname_number -d:`"
+    
+    fi
+
+    #
+    # Choose a destination for the options file, and copy it there.
+    #
+
+    if [ "X$OPTIONS_DEST_OVERRIDE" != "X" ]; then
+        # Override destination
+        echo
+        echo "$FOUND_FILE is being copied to "
+        echo "$OPTIONS_DEST_OVERRIDE"
+        echo
+        cp $FOUND_FILE $OPTIONS_DEST_OVERRIDE
+    else
+        #
+        # Options file goes into preferences directory.
+        # Create the preferences directory for the user, if it doesn't already exist.
+        #
+        
+        determine_preference_dir
+
+        if [ ! -d $PREF_DIR ]; then
+            echo
+            echo $PREF_DIR does not exist. It will be created.
+            echo
+            mkdir -p $PREF_DIR
+        fi
+
+        if [ -d $PREF_DIR/$DEFAULT_OPTIONS_FILE ]; then
+            echo "$PREF_DIR/$DEFAULT_OPTIONS_FILE is a directory. Please remove it."
+            exit 1
+        fi
+        if [ -f $PREF_DIR/$DEFAULT_OPTIONS_FILE ]; then
+            echo "Overwrite $PREF_DIR/$DEFAULT_OPTIONS_FILE ([y]/n)? "
+            read action
+            if [ "$action" = "n" ]; then
+                echo
+                echo "Will not overwrite existing file. Options file not changed."
+                echo
+                exit 0
+            fi
+            rm -f $PREF_DIR/$DEFAULT_OPTIONS_FILE
+        fi
+        echo
+        echo "$FOUND_FILE is being copied to "
+        echo "$PREF_DIR/$DEFAULT_OPTIONS_FILE"
+        echo
+        cp $FOUND_FILE $PREF_DIR/$DEFAULT_OPTIONS_FILE
+    fi
+        
+}
+# end setup_options_file ()
+#
+#========================= optsetup.sh (end) ==============================
+#
+#****************************************************************************
+#
+  get_arch () {
+#========================= arch.sh (start) ============================
+#!/bin/sh
+#
+# usage:        arch.sh
+#
+# abstract:     This Bourne Shell script determines the architecture
+#               of the the current machine.
+#
+#               ARCH      - Machine architecture
+#
+#               IMPORTANT: The shell function 'check_archlist' is used
+#                          by this routine and MUST be loaded first.
+#                          This can be done by sourcing the file,
+#
+#                              archlist.sh
+#
+#                          before using this routine.
+#
+# note(s):      1. This routine must be called using a . (period)
+#
+#               2. Also returns ARCH_MSG which may contain additional
+#                  information when ARCH returns 'unknown'.
+#
+# Copyright 1986-2011 The MathWorks, Inc.
+#----------------------------------------------------------------------------
+#
+#=======================================================================
+# Functions:
+#   realfilepath ()
+#   matlab_arch ()
+#=======================================================================
+    realfilepath () { # Returns the actual path in the file system
+                      # of a file. It follows links. It returns an
+                      # empty path if an error occurs.
+                      #
+                      # Returns a 1 status if the file does not exist
+                      # or appears to be a circular link. Otherwise,
+                      # a 0 status is returned.
+                      #
+                      # usage: realfilepath filepath
+                      #
+    filename=$1
+#
+# Now it is either a file or a link to a file.
+#
+    cpath=`pwd`
+
+#
+# Follow up to 8 links before giving up. Same as BSD 4.3
+#
+      n=1
+      maxlinks=8
+      while [ $n -le $maxlinks ]
+      do
+#
+# Get directory correctly!
+#
+	newdir=`echo "$filename" | awk '
+                        { tail = $0
+                          np = index (tail, "/")
+                          while ( np != 0 ) {
+                             tail = substr (tail, np + 1, length (tail) - np)
+                             if (tail == "" ) break
+                             np = index (tail, "/")
+                          }
+                          head = substr ($0, 1, length ($0) - length (tail))
+                          if ( tail == "." || tail == "..")
+                             print $0
+                          else
+                             print head
+                        }'`
+	if [ ! "$newdir" ]; then
+	    newdir="."
+	fi
+	(cd "$newdir") > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+	    return 1
+	fi
+	cd "$newdir"
+#
+# Need the function pwd - not the built in one
+#
+	newdir=`/bin/pwd`
+#
+	newbase=`expr //"$filename" : '.*/\(.*\)' \| "$filename"`
+        lscmd=`ls -ld "$newbase" 2>/dev/null`
+	if [ ! "$lscmd" ]; then
+	    return 1
+	fi
+#
+# Check for link portably
+#
+	if [ `expr "$lscmd" : '.*->.*'` -ne 0 ]; then
+	    filename=`echo "$lscmd" | awk '{ print $NF }'`
+	else
+#
+# It's a file
+#
+	    dir="$newdir"
+	    command="$newbase"
+#
+	    cd "$dir"
+#
+# On Mac OS X, the -P option to pwd causes it to return a resolved path, but
+# on 10.5, -P is no longer the default, so we are now passing -P explicitly
+#
+            if [ "$ARCH" = 'mac' -o "$ARCH" = 'maci' -o "$ARCH" = 'maci64' ]; then
+                echo `/bin/pwd -P`/$command
+#
+# The Linux version of pwd returns a resolved path by default, and there is
+# no -P option
+#
+            else
+                echo `/bin/pwd`/$command
+            fi
+	    break
+	fi
+	n=`expr $n + 1`
+      done
+      if [ $n -gt $maxlinks ]; then
+	return 1
+      fi
+
+    cd "$cpath"
+    }
+#
+#=======================================================================
+    set_mac_arch() {
+        # First check to see if maci64 is even possible on this hardware
+        if [ "`/usr/sbin/sysctl -n hw.cpu64bit_capable`" = "0" ]; then
+            # maci64 is not possible. So set the arch to maci.
+            ARCH="maci"
+            return
+        fi
+
+        # Now check to see if maci64 is asked for
+        if [ "$MACI64" = "0" ]; then
+            # only maci is wanted, so arch is maci.
+            ARCH="maci"
+            return
+        fi
+
+        # If we get to this point, maci64 is available and desired. So, check to
+        # see if 64 bit binaries are available. First, if $MATLABROOT is NOT
+        # set, we can't really check for anything else.
+        if [ "$MATLABROOT" = "" ]; then
+            ARCH="maci64";
+            return
+        fi
+
+
+        # if we get to this point, we need to check the binaries that we have to
+        # find out if we have maci64 binaries
+        if [ -d "$MATLABROOT/bin/maci64" ]; then
+            ARCH="maci64"
+            return
+        fi
+
+        # if we get to this point, even though maci64 is possible and desired,
+        # the maci64 binaries aren't available, so fall back to maci
+        ARCH="maci"
+    }
+
+#
+#=======================================================================
+    matlab_arch () {  # Determine the architecture for MATLAB
+                      # It returns the value in the ARCH variable.
+                      # If 'unknown' is returned then sometimes a
+                      # diagnostic message is returned in ARCH_MSG.
+                      #
+                      # Always returns a 0 status.
+                      #
+                      # usage: matlab_arch
+                      #
+        ARCH="unknown"
+#
+        if [ -f /bin/uname ]; then
+            case "`/bin/uname`" in
+                SunOS)                                  # Solaris
+                    case "`/bin/uname -p`" in
+                        sparc)
+                            ARCH="sol64"
+                            ;;
+                        i386)
+                            ARCH="sola64"
+                            ;;
+                    esac
+                    ;;
+                Linux)
+                    case "`/bin/uname -m`" in
+                        i*86)
+                            ARCH="glnx86"
+                            ;;
+                        x86_64)
+                            ARCH="glnxa64"
+                            ;;
+                    esac
+                    ;;
+# Usually uname lives in /usr/bin on the Mac, but sometimes people
+# have links in /bin that link uname to /usr/bin.  Because of this
+# Mac needs to be listed in the checks for both /bin/uname and /usr/bin/uname
+                Darwin)                                 # Mac OS X
+                    case "`/bin/uname -p`" in
+                        i386)
+                            set_mac_arch
+                            ;;
+                        esac
+                    ;;
+                *)
+                    :
+                    ;;
+            esac
+        elif [ -f /usr/bin/uname ]; then
+            case "`/usr/bin/uname`" in
+                Darwin)                                 # Mac OS X
+                    case "`/usr/bin/uname -p`" in
+                        i386)
+                            set_mac_arch
+                            ;;
+                        esac
+                    ;;
+            esac
+        fi
+        return 0
+    }
+#=======================================================================
+#
+# The local shell function check_archlist is assumed to be loaded before this
+# function is sourced.
+#
+    ARCH_MSG=''
+    check_archlist ARCH=$ARCH
+    if [ "$ARCH" = "" ]; then
+        if [ "$MATLAB_ARCH" != "" ]; then
+            check_archlist MATLAB_ARCH=$MATLAB_ARCH
+        fi
+        if [ "$ARCH" = "" ]; then
+            matlab_arch
+        fi
+    fi
+    Arch=$ARCH
+#========================= arch.sh (end) ==============================
+    if [ "$Arch" = "unknown" ]; then
+        describe unknown_architecture >&2
+        cleanup
+        exit 1
+    fi
+    if [ "$verbose" = "1" ]; then
+        temp_file=$tmpbase.b
+        INTERMEDIATE="$INTERMEDIATE $temp_file"
+#========================= oscheck.sh (start) ============================
+#!/bin/sh
+#set -x
+#
+# usage:        oscheck.sh
+#
+# abstract:     This Bourne Shell script determines the OS level of the
+#               system and responds according to what it finds. There
+#               are four numbers of interest:
+#
+#                   minimum_ver - minimum version allowed to run
+#                   release_ver - release version
+#                   future_ver  - future version that we know doesn't work
+#
+#                                 Note: "-" means infinite and is allowed
+#                                       only for future_ver
+#
+#                   version     - current version
+#
+#		and the environment variable:
+#
+#		    OSCHECK_ENFORCE_LIMITS - used to determine whether to
+#					     ignore the limits when
+#					     deciding how to respond.
+#
+#					  !=  0  (enforce limits: DEFAULT)
+#					   =  0  (ignore limits)
+#
+#               We check for:
+#
+#                   minimum_ver<=release_ver<=future_ver
+#
+#               If this condition is not met on the current platform
+#               no further analysis is done and the behavior depends
+#               on the value of oscheck_debug set in this script.
+#               If oscheck_debug=1 an internal error message is
+#               generated and you are asked to quit. If oscheck_debug=0
+#               then a normal return is done with no messages produced
+#               and an attempt is made to start MATLAB.
+#
+#               Here are the cases tested and the resulting behavior:
+#
+#               If version > future_ver ||
+#                  version == future_ver && release_ver < future_ver
+#		     if OSCHECK_ENFORCE_LIMITS != 0
+#                        too new warning message
+#                        request to stop
+#		     else
+#                        no message
+#                        continue
+#               If release_ver <= version <= future_ver
+#                    no message
+#                    continue
+#               If minimum_ver <= version <= release_ver 
+#                    standard warning message
+#                    continue
+#               If version < minimum_ver
+#		     if OSCHECK_ENFORCE_LIMITS != 0
+#                        too old warning message
+#                        request to stop
+#		     else
+#                        standard warning message
+#                        continue
+#
+#               Arch      - Machine architecture variable must be set
+#
+# note(s):      1. This routine must be called using a . (period)
+#
+#               2. token is the version in N.N... form
+#
+#                  glnx86:  /lib/libc.so.6    -> messy parsing to yield token 
+#		   glnxa86: /lib/libc.so.6    -> messy parsing to yield token
+#		   mac:     uname -r	      -> token(1)
+#
+#               3. This requires at least the System V Bourne Shell since
+#                  internal functions are used.
+#
+#               4. Algorithm:
+#
+#		   a. Generate version results.
+#                  b. If no results then nothing to do.
+#		   c. Otherwise fix error state depending on results
+#		      and OSCHECK_ENFORCE_LIMITS.
+#		   d. Output any messages.
+#		   e. Handle input user interaction when
+#		      action required to continue.
+#
+#               5. The calling routine will exit if the variable,
+#                  oscheck_status, is set as follows:            
+#
+#                      oscheck_status=1
+#
+#               6. Also, any cleanup associated with of an interrupt
+#                  will be handled by the calling routine.
+#
+#               7. Set oscheck_debug=1 to check for the consistency 
+#                  of the data. Set oscheck_debug=0 for shipping.
+#
+# Copyright 1996-2009 The MathWorks, Inc.
+# $Revision: 1.1.6.10 $  $Date: 2010/10/25 14:37:21 $
+#----------------------------------------------------------------------------
+#
+
+#------------------------------------------------------------------------------
+# Function to check for SSE2 instruction, only use on glnx86!!!
+#    hasSSE2()   {
+#        if !(cat /proc/cpuinfo | grep -q sse2); then
+#            echo 'MATLAB requires the SSE2 instruction set.\n'
+#            echo 'For system requirements consult http://www.mathworks.com ...'
+#            oscheck_status=1
+#        fi
+#        
+#    }
+#------------------------------------------------------------------------------
+
+    oscheck_status=0
+
+#------------------------------------------------------------------------------
+    instructioncheck() { # check /proc/cpuinfo on glnx86 for
+                         # correct level of instructions
+                         # Output the flag location. A zero mean
+                         # no flag.
+        case $Arch in
+            glnx86)
+                # Example: Be sure that the platform has flag sse2
+                #          There are many ways to do this.
+                #          Output the flag location.
+                expr "`cat /proc/cpuinfo`" : '.* sse2 .*$'
+                return
+                ;;
+            *)
+                ;;
+        esac
+        echo 1
+        return
+   }
+#------------------------------------------------------------------------------
+
+if [ `instructioncheck` -eq 0 ]; then
+    echo ''
+    echo 'Error: Your computer processor is missing the SSE2 instructions that'
+    echo '       are required for MATLAB to run correctly.'
+    echo '       For system requirements consult http://www.mathworks.com ...'
+    echo ''
+    oscheck_status=1
+else
+    #
+    #                   arch   OSprefix minimum_ver release_ver future_ver
+    #
+        oslist="        glnx86  glibc    2.5         2.7         -"
+        oslist="$oslist glnxa64 glibc    2.5         2.7         -"
+        oslist="$oslist maci    Darwin   8.7.0       8.7.0       -"
+        oslist="$oslist maci64  Darwin   10.4.0      10.4.0      -"
+    #
+        if [ -f /bin/uname ]; then
+            case $Arch in
+                glnx86)
+    
+    # Check to see if the processor has the SSE 2 instruction set.
+    # We decided to place the check here as we discovered the need for this check
+    # too late in the 2008a release cycle to make changes in the C++ code. 
+    
+    #            hasSSE2
+    #            if ["$oscheck_status" = "1"]; then
+    #                return
+    #            fi
+                
+    #
+    # Note: R13 used 'uname -r'. If you use ver below, we shipped with 2.1.2
+    #
+    # This may be run on either glnx86 or glnxa64. Note that things are OK
+    # since release_ver on glnx86 <= glnxa64.
+    #
+    # Example: first line from executing /lib/libc.so.6
+    # glnx86:  GNU C Library stable release version 2.2.5, by Roland McGrath et al.
+    # glnxa64: GNU C Library stable release version 2.3.2 (20030827), by Roland McGrath et al.
+    #
+                    ver=`/lib/libc.so.6 | head -n 1 | sed -e "s/^[^0-9]*//" -e "s/[ ,].*$//"`
+                    ;;
+                glnxa64)
+    #
+    # Example: first line from executing /lib64/libc.so.6
+    # glnxa64: GNU C Library stable release version 2.3.2 (20030827), by Roland McGrath et al.
+    #
+                    ver=`/lib64/libc.so.6 | head -n 1 | sed -e "s/^[^0-9]*//" -e "s/[ ,].*$//"`
+                    ;;
+    	    Darwin)					# Mac OS X
+            	ver=`/usr/bin/uname -r | awk '{print $1}'`
+                    ;;
+                *)
+    		ver=`/bin/uname -r | awk '{print $1}'`
+                    ;;
+            esac
+        elif [ -f /usr/bin/uname ]; then
+            case "`/usr/bin/uname`" in
+    	    Darwin)					# Mac OS X
+                    ver=`/usr/bin/uname -r | awk '{print $1}'`
+                    ;;
+            esac
+        fi
+    #
+    # Be sure that OSCHECK_ENFORCE_LIMITS has a value
+    #
+        if [ "$OSCHECK_ENFORCE_LIMITS" = "" -o "$OSCHECK_ENFORCE_LIMITS" != "0" ]; then
+    	OSCHECK_ENFORCE_LIMITS=1
+        fi
+    #
+    #  Set oscheck_debug=0 for shipping
+    #
+        oscheck_debug=0
+    #
+        results=`echo $Arch $ver "$oslist"| awk '
+    #---------------------------------------------------------------------------
+            BEGIN { str = "0123456789"; strp = str "."
+                    astr = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" }
+            { arch = $1;
+              origver = $2;
+    #
+    # remove any non-numeric prefix from the version like V, etc.
+    #
+              ver = ""
+              for (j = 1; j <= length(origver); j = j + 1)
+                  if (index(strp,substr(origver,j,1)) != 0) {
+                      ver = substr(origver,i)
+                      break
+                  }
+              lver = length(ver)
+              for (i = 3; i <= NF; i = i + 5) {
+                  n[$i] = $(i+1) ""
+                  m[$i] = $(i+2) ""
+                  r[$i] = $(i+3) ""
+                  f[$i] = $(i+4) ""
+              }
+              mver = m[arch]
+              rver = r[arch]
+              if (rver == "") exit 
+              fver = f[arch]  
+    #
+    # split the minimum version
+    #
+              nmver = split(mver,mv,".")
+              for (i = 1; i <= nmver; i = i + 1)
+                  if (mv[i] == "") mv[i] = 0
+    #
+    # split the release version
+    #
+              nrver = split(rver,rv,".")
+              for (i = 1; i <= nrver; i = i + 1)
+                  if (rv[i] == "") rv[i] = 0
+    #
+    # split the future version if there is one
+    #
+              if (fver != "-") {
+                  nfver = split(fver,fv,".")
+                  for (i = 1; i <= nfver; i = i + 1)
+                      if (fv[i] == "") fv[i] = 0
+              }
+    #
+    # split the actual version
+    # remove everything in a word after a nondigit
+    #
+              nver = split(ver,v,".")
+              for (i = 1; i <= nver; i = i + 1) {
+                  new = ""
+                  for (j = 1; j <= length(v[i]); j = j + 1)
+                      if (index(str,substr(v[i],j,1)) != 0)
+                          new = new substr(v[i],j,1)
+                      else
+                          break
+                  v[i] = new
+                  if (v[i] == "") v[i] = 0
+              }
+    #
+    # errmode: 0 - no warning
+    #          1 - too old warning
+    #          2 - warning
+    #          3 - too new warning
+    #          4 - internal error (not shipped)
+    #
+              errmode = 0
+    #
+    # check: minimum_ver<=release_ver<=future_ver
+    #        minimum_ver != "-"
+    #        release_ver != "-"
+    #
+              if (nmver < nrver)
+                  ncd = nmver
+              else 
+                  ncd = nrver
+              for (i = 1; i <= ncd; i = i + 1)
+                  if (mv[i] + 0 > rv[i] + 0) {
+                       errmode = 4
+                       break
+                  }
+                  else if (mv[i] + 0 < rv[i] + 0)
+                       break
+              if (errmode == 0 && i == ncd + 1 && nmver > nrver)
+                  for (i = ncd + 1; i <= nmver; i = i + 1)
+                      if (mv[i] + 0 != 0 ) {
+                          errmode = 4
+                          break
+                      }
+              if (errmode == 0 && fver != "-") {
+                  if (nrver < nfver)
+                      ncd = nmver
+                  else 
+                      ncd = nfver
+                  for (i = 1; i <= ncd; i = i + 1)
+                      if (rv[i] + 0 > fv[i] + 0) {
+                          errmode = 4
+                          break
+                      }
+                      else if (rv[i] + 0 < fv[i] + 0)
+                          break
+                  if (errmode == 0 && i == ncd + 1 && nrver > nfver)
+                      for (i = ncd + 1; i <= nrver; i = i + 1)
+                          if (rv[i] + 0 != 0 ) {
+                              errmode = 4
+                              break
+                          }
+              }
+              if (errmode == 0 && nmver == 1 && mver == "-")
+                  errmode = 4
+              else if (errmode == 0 && nrver == 1 && rver == "-")
+                  errmode = 4
+    #
+    # check whether release_ver < future_ver (futuremode = 1)
+    #
+              if (errmode == 0) {
+                  futuremode = 1
+                  if (fver != "-") {
+                      if (nrver < nfver)
+                          ncd = nrver
+                      else
+                          ncd = nfver
+                      futuremode = 0
+                      for (i = 1; i <= ncd; i = i + 1)
+                          if (rv[i] + 0 < fv[i] + 0) {
+                              futuremode = 1
+                              break
+                          }
+                     if (futuremode == 0)
+                         for (i = ncd + 1; i <= nfver; i = i + 1)
+                             if (fv[i] + 0 != 0) {
+                                 futuremode = 1
+                                 break
+                             }
+                  }
+              }
+    #
+    # check if version > future_ver ||
+    #          version == future_ver && release_ver < future_ver
+    #
+              if (errmode == 0 && fver != "-") {
+                  if (nfver < nver)
+                      ncd = nfver
+                  else
+                      ncd = nver
+                  for (i = 1; i <= ncd; i = i + 1)
+                      if (v[i] + 0 > fv[i] + 0) {
+                          errmode = 3
+                          break
+                      }
+                      else if (v[i] + 0 < fv[i] + 0)
+                          break
+                  if (errmode == 0 && i == ncd + 1 && ncd == nver) {
+                      for (i = ncd + 1; i <= nfver; i = i + 1)
+                          if (fv[i] + 0 != 0)
+                              break
+                      if (i == nfver + 1 && futuremode == 1)
+                          errmode = 3
+                      else if (i == nfver + 1 && futuremode == 0)
+    #
+    # case: version == future_ver && release_ver == future_ver
+    #
+                          exit
+                  }
+                  else if (errmode == 0 && i == ncd + 1 && ncd == nfver) {
+                      for (i = ncd + 1; i <= nver; i = i + 1)
+                          if (v[i] + 0 != 0) {
+                              errmode = 3
+                              break
+                          }
+                      if (i == nver + 1 && futuremode == 1)
+                          errmode = 3
+                      else if (i == nver + 1 && futuremode == 0)
+    #
+    # case: version == future_ver && release_ver == future_ver
+    #
+                          exit
+                  }
+              }
+    #
+    # check if release_ver <= version
+    #
+              if (errmode == 0) {
+                  if (nrver < nver)
+                      ncd = nrver
+                  else
+                      ncd = nver
+                  for (i = 1; i <= ncd; i = i + 1)
+                      if (rv[i] + 0 > v[i] + 0)
+                          break
+                      else if (rv[i] + 0 < v[i] + 0)
+                          exit
+                  if (i == ncd + 1 && ncd == nrver)
+                      exit
+                  else if (i == ncd + 1 && ncd == nver) {
+                      for (i = ncd + 1; i <= nrver; i = i + 1)
+                          if (rv[i] + 0 != 0)
+                              break
+                      if (i == nrver + 1)
+                          exit
+                  }
+              }   
+    #
+    # check if minimum_ver <= version || version < minimum_ver
+    #
+              if (errmode == 0) {
+                  if (nmver < nver)
+                      ncd = nmver
+                  else
+                      ncd = nver
+                  for (i = 1; i <= ncd; i = i + 1)
+                      if (mv[i] + 0 > v[i] + 0) {
+                          errmode = 1
+                          break
+                      }
+                      else if (mv[i] + 0 < v[i] + 0) {
+                          errmode = 2
+                          break
+                      }
+                  if (i == ncd + 1 && ncd == nmver) {
+                      errmode = 2
+                  }
+                  else if (i == ncd + 1 && ncd == nver) {
+                      for (i = ncd + 1; i <= nmver; i = i + 1)
+                          if (mv[i] + 0 != 0) {
+                              errmode = 1
+                              break
+                          }
+                      if (i == nmver + 1) 
+                          errmode = 2
+                  }
+              }   
+    	  print errmode, n[arch], ver, mver, rver, fver
+            }'`
+    #---------------------------------------------------------------------------
+    #
+    # No results means no error.
+    #
+        if [ "$results" != "" ]; then
+            errmode=`echo $results | awk '{ print $1}'`
+            errflag=$errmode
+    #
+    # Fix errflag depending on the value of $OSCHECK_ENFORCE_LIMITS
+    #
+            if [ "$errmode" = "1" -a "$OSCHECK_ENFORCE_LIMITS" = "0" ]; then
+    	    errflag=2
+            elif [ "$errmode" = "3" -a "$OSCHECK_ENFORCE_LIMITS" = "0" ]; then
+    	    errflag=0
+            fi
+    #
+            error_string=`echo $errflag $results $oscheck_debug | awk '
+    #---------------------------------------------------------------------------
+    	{ errmode = $1
+    	  arch = $3
+    	  ver = $4
+    	  mver = $5
+    	  rver = $6
+    	  fver = $7
+    	  debug = $8
+              if (errmode == 1) {
+    printf "\\n"
+    printf "----------------------------------------------------------------------------\\n"
+    printf "Warning: %s %-10s - Unsupported version\\n", arch, ver
+    printf "         %s %-10s - MATLAB built using this version\\n", arch, rver
+    printf "----------------------------------------------------------------------------\\n"
+              }
+              else if (errmode == 2) {
+    printf "\\n"
+    printf "----------------------------------------------------------------------------\\n"
+    printf "Warning: %s %-10s - Your version\\n", arch, ver
+    printf "         %s %-10s - MATLAB built using this version\\n", arch, rver
+    printf "----------------------------------------------------------------------------\\n"
+              }
+              else if (errmode == 3) {
+    printf "\\n"
+    printf "----------------------------------------------------------------------------\\n"
+    printf "Warning: %s %-10s - Unqualified version\\n", arch, ver
+    printf "         %s %-10s - MATLAB built using this version\\n", arch, rver
+    printf "----------------------------------------------------------------------------\\n"
+              }
+              else if (errmode == 4) {
+                  if (debug == 0) exit
+    printf "\\n"
+    printf "----------------------------------------------------------------------------\\n"
+    printf "Error: %s %-10s - Internal Error - oscheck.sh has inconsistent data\\n", arch, ver
+    printf "       %s %-10s - Minimum supported version\\n", arch, mver
+    printf "       %s %-10s - MATLAB built using this version\\n", arch, rver
+    printf "       %s %-10s - Maximum supported version\\n", arch, fver
+    printf "----------------------------------------------------------------------------\\n"
+    printf "\\n"
+              }
+        }'`
+    #---------------------------------------------------------------------------
+    #=======================================================================
+    # Functions:
+    #=======================================================================
+        echon ()    { # echo without a newline - UNIX dependent
+                      #
+                      # usage: echon
+                      #
+            if [ "`echo -n`" != "" ]; then
+                echo "$1\c"
+            else
+                echo -n "$1"
+            fi
+        }
+    
+    
+    #=======================================================================
+            if [ "$error_string" != "" ]; then
+                errtype=`printf "$error_string\n" | awk 'NR == 3 {print $5}'`
+                case "$errtype" in
+                    'Unsupported')
+			printf "$error_string\n"
+    #---------------------------------------------------------------------------
+    echo '-> Your configuration APPEARS to be too OLD to run this MATLAB program!'
+    echo '----------------------------------------------------------------------------'
+    #---------------------------------------------------------------------------
+                        ;;
+                    'Unqualified')
+			printf "$error_string\n"
+    #---------------------------------------------------------------------------
+    echo '-> Your configuration APPEARS to be too NEW to run this MATLAB program!'
+    echo '----------------------------------------------------------------------------'
+    #---------------------------------------------------------------------------
+                        ;;
+                    'Your')
+    		    if [ "$errmode" = "1" ]; then
+			printf "$error_string\n"
+    #---------------------------------------------------------------------------
+    echo '-> Please Note: This program may work on this host but MATLAB will not!'
+    echo '----------------------------------------------------------------------------'
+    echo 'Please wait . . .'
+    echo ' '
+    #---------------------------------------------------------------------------
+    		        sleep 5
+    		    fi
+    		    ;;
+                     *)
+                        printf "$error_string\n"
+                        ;;
+                esac
+    #
+                case "$errtype" in
+                    'Unsupported'|'Unqualified')
+    #---------------------------------------------------------------------------
+    echo '   For system requirements consult http://www.mathworks.com ...'
+    #---------------------------------------------------------------------------
+                        ;;
+                    'Internal')
+    #---------------------------------------------------------------------------
+    echo 'Please report this problem to The MathWorks, Inc. Technical Support'
+    echo '       phone: (508) 647-7000'
+    echo '       email: support@mathworks.com'
+    #---------------------------------------------------------------------------
+                        ;;
+                     *)
+                        :
+                        ;;
+                esac
+    #
+                case "$errtype" in
+                    'Unsupported'|'Unqualified'|'Internal')
+    #---------------------------------------------------------------------------
+    echo ' '
+    echo '***************************************************************************'
+    echo '-> Best to quit by pressing <return> at the next prompt ...'
+    echo ' '
+    echon '   Do you still want to try to continue? (y/[n]) > '
+    #---------------------------------------------------------------------------
+                        if [ "$batch" != "1" ]; then
+                            read ans
+                            if [ `expr "//$ans" : '//[Yy].*'` -gt 0 ]; then
+                                :
+                            else
+                                oscheck_status=1
+                            fi
+                        else
+    #---------------------------------------------------------------------------
+         echo 'y'               
+    #---------------------------------------------------------------------------
+                        fi
+    #---------------------------------------------------------------------------
+    echo ' '
+    #---------------------------------------------------------------------------
+                        ;;
+                     *)
+                        :
+                        ;;
+                esac
+    	fi
+        fi
+fi
+#========================= oscheck.sh (end) ==============================
+        if [ "$oscheck_status" = "1" ]; then
+            cleanup
+            exit 1
+        fi
+    fi
+  }
+# end get_arch ()
+#
+#****************************************************************************
+#
+  eval_assignments () {
+#
+# eval command line overrides of argument variables, name=[def]
+#
+    eval "$cmd_line_overrides"
+
+#
+# Make sure that LD is fully evaluated to handle LD=$COMPILER assignment
+#
+    LD="`eval echo $LD`"
+
+  }
+
+# end eval_assignments ()
+#
+#****************************************************************************
+#
+  error_check () {
+#
+#   Check for errors in calling syntax
+#
+    if [ "$files" != "" -a "$cfiles" != "1" -a "$ffiles" != "1" ]; then
+        cfiles=1
+    fi
+    if [ "$stat" != "OK" ]; then                  # An error occurred.
+        if [ "$stat" != "" ]; then
+            describe status >&2
+        fi
+        describe usage >&2
+        cleanup
+        exit 1
+    fi
+  }
+# end error_check ()
+#
+#****************************************************************************
+#
+  get_name () {
+#
+#   Use the first file name to determine the name of the executable.
+#   If there is already a mbuild name, -output was used.
+#   If there are no files, don't complain (error_check comes later).
+#
+    if [ "$1" != "" -a "$outname" = "" ]; then
+        ext=`expr "$1" : '\.*[^.].*\.\([^.]*\)$'`
+        outname=`expr "//$1" : ".*/\(.*\)\.${ext}$" \| "//$1" : ".*/\(.*\)"`
+        outname=$outname$mbuild_ext
+    elif [ "$outname" != "" ]; then
+        ext=`expr "$outname" : ".*\.$mbuild_ext$"`
+        if [ "$ext" = "0" ]; then
+            outname=$outname$mbuild_ext
+        fi
+    fi
+
+    if [ "$ARCH" = "maci64" -a "$nobundle" = "" ]; then
+        appname=$outname
+        if [ "$OUTDIR" != "" ]; then
+	    BUNDLEDIR="$OUTDIR/$appname.app/Contents/MacOS"
+        else
+	    BUNDLEDIR="$appname.app/Contents/MacOS"
+        fi
+        outname="$BUNDLEDIR/$outname"
+    elif [ "$OUTDIR" != "" ]; then
+	outname="$OUTDIR/$outname"
+    fi
+    outname=`smart_quote $outname`
+  }
+# end get_name ()
+#
+#****************************************************************************
+#
+  compile () {
+    trap "eval $abort; exit 1" 1 2 3 15
+#
+#   For each file, compile source files and add other files
+#   to the list of link options.
+#
+    file="$1"
+    if [ ! -f "$file" ]; then
+        describe file_not_found >&2
+        cleanup
+        exit 1
+    fi
+#
+# determine extension and basename
+#
+    ext=`expr "$file" : '\.*[^.].*\.\([^.]*\)$'`
+    if [ "$ext" = "" ]; then
+        ext=`expr "$file" : '\.*[^.].*\.\(so\)[.0-9]*$'`
+    fi
+    basename=`expr "//$file" : ".*/\(.*\)\.${ext}$" \| //"$file" : ".*/\(.*\)"`
+#
+    if [ "$TEMP" != "" -a "$compile_only" != "1" ]; then
+        basename=$TEMP/$basename$$
+    elif [ "$OUTDIR" != "" ]; then
+        basename=$OUTDIR/$basename
+    fi
+    basename=`smart_quote $basename`
+#
+# Source file extensions: .c .C .cc .cxx .cpp .f .for .F
+#
+    file=`quote_arg "$file"`
+    case "$ext" in
+        c | C | cc | cpp | cxx) # C/C++ source file.
+#
+# determine whether to optimize or debug
+#
+            if [ "$debug" != "1" ]; then
+                flags="$COPTIMFLAGS"
+            elif [ "$optimize" = "1" ]; then
+                flags="$CDEBUGFLAGS $COPTIMFLAGS"
+            else
+                flags="$CDEBUGFLAGS"
+            fi
+#
+# Determine final compile command for C source code.
+#
+            flags="$CFLAGS $cc_flags $flags"
+            compile_command="$CC -c $include_dirs $flags $file"
+            ;;
+
+        *)
+#
+# Object files: Don't need to do anything except add to compiled list
+#
+            objs="$objs $file"
+            return 0
+            ;;
+    esac
+#
+
+    if [ "$TEMP" != "" -a "$compile_only" != "1" ]; then
+        compile_command="$compile_command -o $basename.o"
+    elif [ "$OUTDIR" != "" ]; then
+        compile_command="$compile_command -o $basename.o"
+    fi
+#
+    if [ "$verbose" = "1" -o "$no_execute" = "true" ]; then
+        describe compile_stage
+    fi
+#
+    if [ "$no_execute" != "true" ]; then eval "$compile_command"; fi
+    if [ $? -ne 0 ]; then
+        describe failed_compile >&2
+	cleanup
+        exit 1
+    fi
+    if [ "$compile_only" != "1" ]; then
+        if [ "$Arch" = "sol2" -a "$debug" = "1" ]; then
+            # We need to keep the object files around
+            :
+        else
+            INTERMEDIATE="$INTERMEDIATE $basename.o"
+        fi
+    fi
+    objs="$objs $basename.o"
+  }
+# end compile ()
+#
+#****************************************************************************
+#
+  makedef () {
+    trap "eval $abort; exit 1" 1 2 3 15
+    
+# Just in case there are no .exports files specified by the user,
+# make sure it does
+    touch $LI_EXPFILE
+
+    if [ "$verbose" = "1" ]; then
+        describe makedef_stage
+    fi
+
+    eval $SHLMAKEDEF $LI_EXPFILE > $EXPFILE
+  }
+# end makedef ()
+#
+#****************************************************************************
+#
+  link () {
+    trap "eval $abort; exit 1" 1 2 3 15
+#
+#   Link stage
+#
+    if [ "$cfiles" = "1" ]; then
+        libs="$CLIBS $libs"
+    fi
+    libetc="$objs $libs"
+#
+#   the mac may need to link with -install_name option.
+#
+    if [ "$installname" != "" ]; then
+       LDFLAGS="$LDFLAGS -install_name $installname"
+    fi
+#   the mac needs the CoreFoundation framework
+#
+    if [ "$Arch" = "maci" -o "$Arch" = "maci64" ]; then
+	LDFLAGS="$LDFLAGS -framework CoreFoundation"
+    fi
+#
+#   standalone applications need ApplicationServices for TransformProcessType.
+#   ApplicationServices brings in Apple's libBLAS.dylib.  Force Mathworks blas
+#   to be first.
+#
+    if [ "$Arch" = "maci" -a $linkarg = "exe" ]; then
+        LDFLAGS="$LDFLAGS -L$TMW_ROOT/bin/$Arch -lmwblas -framework ApplicationServices"
+    fi
+
+#
+# determine whether to optimize or debug
+#
+    if [ "$debug" != "1" ]; then
+        LDFLAGS="$LDOPTIMFLAGS $LDFLAGS"
+    elif [ "$optimize" = "1" ]; then
+        LDFLAGS="$LDDEBUGFLAGS $LDOPTIMFLAGS $LDFLAGS"
+    else
+        LDFLAGS="$LDDEBUGFLAGS $LDFLAGS"
+    fi
+
+    if [ "$linkarg" = "shared" ]; then
+        case "$Arch" in
+             sol2)
+        #
+        # The mechanism for defining which symbols to export or hide is
+        # the ld -Wmapfile option.  For Solaris 2.4 this requires patch
+        # 102303-05.
+        #
+                patched=`showrev -p | grep -c '102303-05'`
+                osversion=`uname -r`
+                if [ "$osversion" = '5.4' ]; then
+                    if [ ! "$patched" = '1' ]; then
+                        describe solaris_linker_patch >&2
+                        cleanup
+                        exit 1
+                    fi
+                fi
+                ;;
+        esac
+    fi
+
+    if [ "$verbose" = "1" -o "$no_execute" = "true" ]; then
+        describe link_stage
+    fi
+    if [ "$no_execute" != "true" ]; then 
+        if [ "$ARCH" = "maci64" -a "$linkarg" = "exe" -a "$nobundle" = "" ]; then
+            if [ "$DYLD_LIBRARY_PATH" = "" ]; then
+                DYLD_LIBRARY_PATH=$TMW_ROOT/bin/maci64
+            else
+                DYLD_LIBRARY_PATH=$TMW_ROOT/bin/maci64:${DYLD_LIBRARY_PATH}
+            fi
+            export DYLD_LIBRARY_PATH
+            $TMW_ROOT/bin/maci64/macbundle "$appname" "`smart_quote $OUTDIR`"
+        fi
+        
+        eval "$LD $LDFLAGS $ld_flags -o $outname $libetc"; 
+        if [ "$ARCH" = "maci64" -a "$debug" = 1 ]; then
+            eval "dsymutil $outname";
+        fi
+    fi
+    if [ $? -ne 0 ]; then
+        describe failed_link >&2
+        cleanup
+        exit 1
+    fi
+  }
+# end link ()
+#
+#
+
+  #
+  # On the Macintosh, bundlelibrary copies the specified library
+  # to the Macintosh bundle and updates the executable to locate
+  # the library next to the executable.
+  #
+  bundlelibrary ()
+  {
+      cp "$1$sl_ext" "$BUNDLEDIR"
+      if [ -f "$1.ctf" ]; then
+          cp "$1.ctf" "$BUNDLEDIR"
+      fi
+      if [ "$debug" = "1" -a -d "$1$sl_ext.dSYM" ]; then
+          cp -r "$1$sl_ext.dSYM" "$BUNDLEDIR"
+      fi
+  }
+#
+#****************************************************************************
+#
+# Main routine
+#
+#
+# Determine what is set in the environment
+# 
+    # Define $MATLAB if it's not defined. 
+    if [ ! "$MATLAB" ]; then            # If no MATLAB='' was used
+        get_root_dir $arg0_
+    fi
+    AUTOMOUNT_MAPenv="$AUTOMOUNT_MAP"
+#
+#  Initialize some variables
+#
+    TOOL_DISPLAY_NAME="MATLAB Compiler"
+    TMW_ROOT="$MATLAB"
+    AUTOMOUNT_MAP=''
+    SOURCE_DIR="search"
+    OPTIONS_FILE="mbuildopts.sh"
+#   
+    if [ `uname` = "Darwin" ]; then
+	privatemap=`expr "$TMW_ROOT" : '/private/*'`
+	if [ "$privatemap" = "9" ]; then
+   	   # If $TMW_ROOT starts with /private/ assume it needs to have
+  	   # AUTOMOUNT_MAP set.
+   	   AUTOMOUNT_MAP='/private ->'
+	fi
+    fi
+#
+# If AUTOMOUNT_MAPenv is not empty ALWAYS use that for AUTOMOUNT_MAP
+#
+    if [ "$AUTOMOUNT_MAPenv" != "" ]; then
+        AUTOMOUNT_MAP="$AUTOMOUNT_MAPenv"
+    fi
+#
+    if [ "$AUTOMOUNT_MAP" != "" ]; then
+#----------------------------------------------------------------------------
+            TMW_ROOT=`echo $TMW_ROOT $AUTOMOUNT_MAP | awk '
+                {if (substr($1,1,length($2)) == $2)
+                     if (NF == 4)                               # a -> b
+                         print $NF substr($1,length($2) + 1)
+                     else                                       # a ->
+                         print substr($1,length($2) + 1)
+                 else
+                     print $1}'`
+#----------------------------------------------------------------------------
+    fi
+#
+    stat="OK"
+    Arch='Undetermined'
+    ARCH=
+    get_arch                            # Determine architecture
+#
+# Set up the linker-independent (LI_) and linker-specific export file names
+    LI_EXPFILE="/tmp/$$tmp_export_list"
+    EXPFILE="/tmp/$$processed_export_list"
+    INTERMEDIATE="$INTERMEDIATE $LI_EXPFILE $EXPFILE"
+
+    linkarg="unspecified"
+    exports_file_seen=0
+
+    linkhg="false"
+
+    arg_count=$#
+    cmd_line_overrides=":"
+    while [ "$stat" = "OK" -a  $# -gt 0 ]; do
+#
+# Parse input arguments.  The routine may need the next two arguments,
+# as in -f optionsfile and -o mbuildfilename.
+#
+        case "$1" in
+            -c)
+                compile_only=1
+                ;;
+            -D*)                           # Compiler flags.
+                lhs=`expr "$1" : '\(-D[a-zA-Z0-9_]*\).*'`
+                mid=`expr "$1" : '-D[a-zA-Z0-9_]*\([=\#]\).*$'`
+                rhs=`expr "$1" : '-D[a-zA-Z0-9_]*[=\#]\(.*\)$'`
+                
+                if [ "$mid" != "" ]; then
+                    mid="="
+                fi
+
+                cc_flags="$cc_flags $lhs$mid$rhs"
+                fc_flags="$fc_flags $lhs$mid$rhs"
+                ;;
+            -U*)                        # Compiler flags.
+                cc_flags="$cc_flags $1"
+                fc_flags="$fc_flags $1"
+                ;;
+            -I*)             # Include directories
+                include_dirs="$include_dirs `smart_quote $1`"
+                ;;
+            -f)
+                if [ -f "$2" ]; then
+                    OPTIONS_FILE="$2"
+                    SOURCE_DIR='none'
+                else
+#                   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    echo '' >&2
+    echo '    Error: An invalid options file name was specified:' >&2
+    echo "           $2 is not a normal file or does not exist." >&2
+    echo '' >&2
+                    cleanup
+                    exit 1
+#                   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+                fi
+                shift
+                ;;
+            -[g]*)                          # Use debugging flags.
+                debug=1
+                ;;
+            -h | -help | -\? )              # -help: Help option.
+                printHelp
+		cleanup
+		exit 0
+                ;;
+            -lang)                          # -lang c or -lang cpp
+	        lang=$2
+                case "$lang" in
+                    c)
+                         ;;
+                  cpp)
+                         ;;
+                    *)
+			 describe "lang"
+                         cleanup
+                         exit 1
+                         ;;
+                esac 
+		shift
+		;;
+            -link)                          # undocumented/grandfathered option
+		linkarg=$2                  # -link exe or -link shared
+                case "$linkarg" in
+                  exe)
+                        ;;
+                  shared)
+                        ;;
+                  *)
+                        describe "link"
+                        cleanup
+                        exit 1
+                        ;;
+                esac
+
+		shift
+		;;
+            -l*)
+                libs="$libs $1"
+                ;;
+            -bundlelib)
+                if [ "$ARCH" = "maci64" ]; then
+                    quoted_arg1=`quote_arg "$2"`
+                    bundlelibs="$bundlelibs $quoted_arg1"
+                else
+                    echo "-bundlelib is only valid on 64-bit Macintosh builds"
+                fi
+                shift
+                ;;
+            -install_name)
+                if [ "$ARCH" = "maci" -o "$ARCH" = "maci64" ]; then
+                    installname=`quote_arg "$2"`
+                else
+                    echo "-install_name is only valid on Macintosh builds"
+                fi
+                shift
+                ;;
+            -L*)                            # -Ldirectory: search path
+                ld_flags="$ld_flags $1"
+                ;;
+            -n)                             # output name
+                no_execute="true"
+                ;;
+            -nohg)                          # suppress default linking with
+                linkhg="false"              # libmwsgl 
+                ;;
+            -outdir)                        # output directory
+                OUTDIR=$2
+                shift
+                ;;
+            -output)                        # output name
+                outname=$2
+                shift
+                ;;
+            -O)                             # Use optimization flags.
+                optimize=1
+                ;;
+            -setup)
+		if [ $arg_count -ne 4 -a $arg_count -ne 3 -a $arg_count -ne 2 -a $arg_count -ne 1 ]; then
+		    describe usage >&2
+                    cleanup
+		    exit 1
+		else
+		    # Allow "-setup", "-setup optionsfile", 
+		    # or "-setup optionsfile destination"
+		    setup_options_file $2 $3
+                    cleanup
+		    exit 0
+		fi
+                ;;
+            -v)
+                verbose=1
+                ;;
+            -nobundle)
+                nobundle='1'
+                ;;
+            -*)
+                check_archlist argument=$1 noprint
+                if [ "$ARCH" = "" ]; then
+                    stat="$1 not a valid option."
+                fi
+                ;;
+            TMW_ROOT[=\#]*)
+                mlrhs=`expr "$1" : '[a-zA-Z0-9_]*[=\#]\(.*\)$'`
+                TMW_ROOT="`eval echo $mlrhs`"
+                ;;
+            *[=\#]*)
+                lhs=`expr "$1" : '\([a-zA-Z0-9_]*\)[=\#].*'`
+                rhs=`expr "$1" : '[a-zA-Z0-9_]*[=\#]\(.*\)$'`
+                cmd_line_overrides="$cmd_line_overrides; $lhs="'"'"$rhs"'"'
+                ;;
+            *.c)                              # C source file
+                cfiles='1'
+                quoted_arg1=`quote_arg "$1"`
+                files="$files $quoted_arg1"
+                ;;
+            *.C | *.cc | *.cpp | *.cxx)       # C++ source file.
+                cppfiles='1'
+                quoted_arg1=`quote_arg "$1"`
+                files="$files $quoted_arg1"
+                ;;
+            *.o)                              # object files
+                quoted_arg1=`quote_arg "$1"`
+                files="$files $quoted_arg1"
+                ;;
+	    *.exports)       
+                # Note that the first regular expression below contains
+                # a tab character.
+                awk '$0 !~ /^[	 ]*$/ && $0 !~ /^[#*]/ { print; }' "$1" >> $LI_EXPFILE 
+                exports_file_seen=1
+		;;
+            *)                                # other files
+                libs="$libs `smart_quote $1`"
+                ;;
+        esac
+    shift
+    done
+
+    if [ "$linkarg" = "unspecified" ]; then
+        if [ $exports_file_seen = 1 ]; then
+            linkarg="shared"
+        else
+            linkarg="exe"
+        fi
+    fi
+#
+
+# Handle -lang switch here
+    if [ "$lang" = "c" ]; then
+        cppfiles=""
+    elif [ "$lang" = "cpp" ]; then
+        cppfiles=1
+    fi
+
+    error_check                         # Check calling syntax errors
+
+#
+# It is now safe to use functions, since we have parsed all of the
+# input arguments.  (The use of functions corrupts $# and $* on
+# HP-UX 9.0x systems.)
+#
+    if [ ! "$OPTIONS_FILE" ]; then      # If no -f optionsfile was used
+        describe no_options_file
+        cleanup
+	exit 1
+    elif [ "$SOURCE_DIR" = "search" ]; then
+        find_options_file $OPTIONS_FILE
+    fi
+#
+
+    . "$OPTIONS_FILE"                     # Source file to determine $TMW_ROOT
+    
+#
+    get_sl_ext                          # determine architecture's shared library extension
+    get_ext                             # Determine appropriate extension
+    get_sl_ext                          # determine architecture's shared library extension
+    eval get_name "$files"                     # Determine result name
+#
+    if [ "$ffiles" = "1" ]; then
+        COMPILER='$FC'
+    else
+        COMPILER='$CC'
+    fi
+#
+#   Check for existence of Graphics Library
+#   Set $linkhg accordingly, so that mbuildopts.sh can use it in determining
+#   default settings.
+#
+    if [ ! -f "$TMW_ROOT/extern/lib/$Arch/libmwsgl$sl_ext" ]; then
+        linkhg="false"                  # if libmwsgl not installed, then
+                                        # assume Graphics Library not 
+                                        # installed. So don't link against it.
+    fi
+
+    . "$OPTIONS_FILE"                     # Source options file
+
+    validate_gcc                 # Validate gcc version
+
+#
+# Fix variables for compile step: consider C++ files and shared link step
+#
+    if [ "$cppfiles" = "1" ]; then
+        COMPILER="$CXX"
+        CC="$CXX"
+        if [ "$linkarg" = "shared" ]; then
+           CFLAGS="$SHLCXXFLAGS"		# This is new with R14
+        else
+           CFLAGS="$CXXFLAGS"
+        fi
+        CDEBUGFLAGS="$CXXDEBUGFLAGS"
+        COPTIMFLAGS="$CXXOPTIMFLAGS"
+        CLIBS="$CXXLIBS"
+# Adding condition for use of -fPIC: support for glnxa64 
+     else 
+	if [ "$linkarg" = "shared" ]; then 
+	    CFLAGS="$SHLCFLAGS"
+	fi
+     fi
+#
+# Fix variables for link step: consider shared link step
+#
+     if [ "$linkarg" = "shared" ]; then
+        if [ "$SHLMAKEDEF" = "" ]; then
+            describe cant_make_shl >&2
+            cleanup
+            exit 1
+        fi
+        LD="$SHLLD"
+        if [ "$cppfiles" = "1" ]; then
+          LDFLAGS="$SHLCXXLDFLAGS"		# This is new with R14
+        else
+          LDFLAGS="$SHLLDFLAGS"
+        fi
+        POSTLINK_CMDS="$SHLPOSTLINK_CMDS"
+      fi
+
+    eval_assignments                    # Evaluate VAR=value arguments
+
+    if [ "$verbose" = "1" ]; then
+        describe final_options
+    fi
+#
+    if [ "$files" = "" ]; then
+        stat="no file names given."
+        describe status >&2
+        describe usage >&2
+        cleanup
+        exit 1
+    fi
+#
+# From this point on, we need to put traps in each function.  The IBM
+# resets traps on entry to each function, so we need to safeguard
+# any functions we call after compiling.  This includes compile(),
+# link(), and cleanup().
+#
+    eval set -- "$files"
+    while [ $# -ne 0 ]
+    do
+        compile "$1"
+        shift
+    done
+#
+    if [ "$compile_only" != "1" ]; then
+        if [ "$linkarg" = "shared" ]; then
+            makedef
+        fi
+        link                            # Perform linking
+        if [ "$linkhg" = "true" ]; then
+	    if [ "$OUTDIR" = "" ]; then
+		OUTDIR='.'
+	    fi
+	    if [ ! -d $OUTDIR/bin ]; then
+	        mkdir $OUTDIR/bin
+	    fi
+	    if [ ! -f $OUTDIR/bin/FigureMenuBar.fig ]; then
+	       cp $TMW_ROOT/extern/include/FigureMenuBar.fig  $OUTDIR/bin/
+	    fi
+	    if [ ! -f $OUTDIR/bin/FigureToolBar.fig ]; then
+	       cp $TMW_ROOT/extern/include/FigureToolBar.fig  $OUTDIR/bin/
+	    fi
+	    if [ ! -f $OUTDIR/bin/Matlab ]; then
+	       cp $TMW_ROOT/X11/app-defaults/Matlab  $OUTDIR/bin/
+	    fi
+        fi
+        #
+        # On Macintosh, check for libraries which must be placed in the bundle,
+        # In addition, executable most be updated to force searching of library
+        # next to executable.
+        #
+        if [ "$bundlelibs" != "" ]; then
+            eval set -- "$bundlelibs"
+            while [ $# -ne 0 ]
+            do
+                bundlelibrary "$1"
+                shift
+            done
+            
+        fi
+        # Perform any POSTLINK_CMDS; ":" is the empty/null command which
+        # we initialize POSTLINK_CMDS to in order to allow for concatenation
+        # of multiple postlink commands such as 
+        #
+        # POSTLINK_CMDS='$POSTLINK_CMDS;my_command'
+        #
+        # if POSTLINK_CMDS were initially empty in the above command, the 
+        # result would be ";my_command" which isn't legal.
+        if [ "$POSTLINK_CMDS" != ":" -a "$POSTLINK_CMDS" != "" ]; then
+            if [ "$verbose" = "1" -o "$no_execute" = "true" ]; then
+                describe postlink_stage
+            fi
+            if [ "$no_execute" != "true" ]; then 
+                eval "$POSTLINK_CMDS"; 
+            fi
+        fi
+    fi
+#
+    cleanup
+    exit 0
+#
+#****************************************************************************

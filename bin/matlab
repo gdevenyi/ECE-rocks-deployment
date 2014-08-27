@@ -1,0 +1,11 @@
+#!/bin/bash
+	if [ $(uname -n) == "grid.ece.mcmaster.ca" ]; then
+                echo "You cannot run MATLAB on the login node, please use qlogin to get an interactive computation node, or qsub to submit a job script"
+		exit 1
+	fi
+
+	if [ $(uname -i) == "x86_64" ]; then
+		/share/apps/bin/64/matlab
+	else
+		/share/apps/bin/32/matlab
+	fi

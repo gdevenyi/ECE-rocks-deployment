@@ -1,0 +1,11 @@
+grid004 - network error - PCI backplane issue
+grid059 - network error - bad CMOS battery
+grid095 - really really dead, no bios
+grid096 - unkown boot error
+
+grid097 - spamming ram errors
+grid137 - bad IDE controller
+grid30 - filesystem or disk error
+grid40 - network problem after install?
+
+grid139 - disk
